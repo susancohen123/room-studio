@@ -28,7 +28,7 @@ export function engine(): "google" | "replicate" | null {
 export async function aiEditImage(imageDataUrl: string, instruction: string, refs: Reference[] = []): Promise<string> {
   const which = engine();
   if (!which) {
-    throw new SetupNeeded("The AI picture service isn't connected yet. Add your Google (Gemini) key to the settings file.");
+    throw new SetupNeeded("One-click AI pictures need a Google (Gemini) key in the settings file. For no extra cost, use \"Send to Gemini\" below with your Gemini subscription.");
   }
   const m = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/.exec(imageDataUrl);
   if (!m) throw new Error("The design picture couldn't be read.");

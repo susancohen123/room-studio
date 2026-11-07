@@ -49,6 +49,9 @@ export default function RoomEditor(props: {
   const [modal, setModal] = useState<React.ReactNode>(null);
   const [aiText, setAiText] = useState("");
   const [setupMsg, setSetupMsg] = useState("");
+  const [gemPreset, setGemPreset] = useState(PRESETS[0].text);
+  const [gemText, setGemText] = useState("");
+  const [copied, setCopied] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const trRef = useRef<Konva.Transformer>(null);
@@ -194,6 +197,86 @@ export default function RoomEditor(props: {
       toast("New picture ready.");
     } catch (e) {
       toast(e instanceof Error ? e.message : "That didn't work.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  // ---------- Send to Gemini (uses the designer's own Gemini subscription) ----------
+  function referenceItems() {
+    const items: { url: string; label: string }[] = [];
+    for (const id of new Set(opt?.pieces.map((p) => p.pieceId) ?? [])) {
+      const p = ws.pieces.find((x) => x.id === id);
+      if (p?.imageUrl) items.push({ url: p.imageUrl, label: [p.name, p.vendor, p.widthIn ? `${fmtIn(p.widthIn)} wide` : "", p.heightIn ? `${fmtIn(p.heightIn)} tall` : ""].filter(Boolean).join(", ") });
+    }
+    if (material) items.push({ url: material.imageUrl, label: `${material.kind === "tile" ? "Tile" : "Wallpaper"} for the marked wall: ${material.name}` });
+    return items;
+  }
+
+  /** One image showing every product, numbered, so Gemini gets just two uploads. */
+  async function referenceSheet(items: { url: string; label: string }[]): Promise<string | null> {
+    if (!items.length) return null;
+    const cols = Math.min(3, items.length), rows = Math.ceil(items.length / cols);
+    const cw = 420, ch = 440;
+    const c = document.createElement("canvas");
+    c.width = cols * cw; c.height = rows * ch;
+    const x = c.getContext("2d")!;
+    x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height);
+    for (let i = 0; i < items.length; i++) {
+      const img = await loadImage(items[i].url);
+      const ox = (i % cols) * cw, oy = Math.floor(i / cols) * ch;
+      const s = Math.min(380 / img.width, 340 / img.height);
+      x.drawImage(img, ox + (cw - img.width * s) / 2, oy + 20 + (340 - img.height * s) / 2, img.width * s, img.height * s);
+      x.fillStyle = "#222"; x.font = "bold 22px sans-serif";
+      x.fillText(`${i + 1}`, ox + 14, oy + 32);
+      x.font = "17px sans-serif";
+      const words = items[i].label.split(" "); let line = "", ly = oy + 390;
+      for (const w of words) { if (x.measureText(line + w).width > cw - 30) { x.fillText(line, ox + 14, ly); line = ""; ly += 22; } line += w + " "; }
+      x.fillText(line, ox + 14, ly);
+    }
+    return c.toDataURL("image/png");
+  }
+
+  async function sendToGemini() {
+    if (!opt) return;
+    setBusy("Preparing files for Gemini…");
+    try {
+      const items = referenceItems();
+      download(await designImage(2048), fileName(room.name, opt.name, "design for Gemini"));
+      const sheet = await referenceSheet(items);
+      if (sheet) download(sheet, fileName(room.name, opt.name, "products for Gemini"));
+      const text = [
+        `Image 1 is my interior design mockup of a client's room (a real photo with the new finishes and furniture pasted in).`,
+        items.length ? `Image 2 is a numbered sheet of the exact products to use: ${items.map((it, i) => `${i + 1}) ${it.label}`).join("; ")}.` : "",
+        `Task: ${gemPreset}`,
+        `Keep the room's architecture, camera angle, windows, doors, ceiling and proportions exactly the same.`,
+        items.length ? `Replace each pasted-in item with a realistic version of the matching product from Image 2, keeping its exact design, color, material and proportions, in the same position and size.` : "",
+        `Make everything photorealistic with natural light and shadows. Return one image in the same proportions as Image 1.`,
+      ].filter(Boolean).join("\n\n");
+      setGemText(text);
+      setCopied(false);
+      try { await navigator.clipboard.writeText(text); setCopied(true); } catch {}
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Couldn't prepare the files.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function addGeminiPictures(files: FileList | null) {
+    if (!files?.length || !opt) return;
+    setBusy("Adding picture…");
+    try {
+      const added: { id: string; url: string; prompt: string; created: number }[] = [];
+      for (const f of Array.from(files)) {
+        const { blob } = await prepPhoto(f, 2400);
+        added.push({ id: uid(), url: await uploadBlob(blob, "renders", f.name), prompt: `From Gemini: ${PRESETS.find((p) => p.text === gemPreset)?.label ?? "picture"}`, created: Date.now() });
+      }
+      const optionId = opt.id;
+      updRoom((rm) => { rm.options.find((o) => o.id === optionId)?.renders.unshift(...added); });
+      toast(added.length > 1 ? `${added.length} pictures added.` : "Picture added.");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Upload failed");
     } finally {
       setBusy("");
     }
@@ -475,6 +558,37 @@ export default function RoomEditor(props: {
               <label>Or describe it<textarea value={aiText} onChange={(e) => setAiText(e.target.value)} placeholder="Swap the rug for a large jute rug and add linen curtains" /></label>
               <button className="btn primary" disabled={!!busy || !aiText.trim()} onClick={() => { runRender(aiText, aiText.slice(0, 60)); setAiText(""); }}>Create picture</button>
               <button className="btn" onClick={async () => download(await designImage(3000), fileName(room.name, opt.name))}>Download current design (PNG)</button>
+
+              <div className="stack" style={{ borderTop: "1px solid var(--line)", paddingTop: 12, gap: 8 }}>
+                <h3 style={{ fontSize: 15, fontWeight: 700 }}>Use your Gemini subscription (no extra cost)</h3>
+                <label>What should Gemini do?
+                  <select value={gemPreset} onChange={(e) => setGemPreset(e.target.value)}>
+                    {PRESETS.map((p) => <option key={p.label} value={p.text}>{p.label}</option>)}
+                    {aiText.trim() && <option value={aiText.trim()}>Your description: {aiText.trim().slice(0, 40)}</option>}
+                  </select>
+                </label>
+                <button className="btn primary" disabled={!!busy} onClick={sendToGemini}>Send to Gemini</button>
+                {gemText && (
+                  <div className="note stack" style={{ gap: 6 }}>
+                    <b>Ready. In Gemini:</b>
+                    <span>1. Open Gemini and start a new chat.</span>
+                    <span>2. Upload the {referenceItems().length ? "two pictures" : "picture"} just saved to your Downloads folder.</span>
+                    <span>3. Paste the instructions (Ctrl+V){copied ? ". They're already copied" : ""}, and send.</span>
+                    <span>4. Download Gemini&apos;s picture, then add it below.</span>
+                    <div className="row">
+                      <a className="btn sm primary" href="https://gemini.google.com/app" target="_blank" rel="noreferrer">Open Gemini</a>
+                      <button className="btn sm" onClick={async () => { try { await navigator.clipboard.writeText(gemText); setCopied(true); toast("Instructions copied."); } catch { toast("Couldn't copy. Select the text below instead."); } }}>Copy instructions again</button>
+                    </div>
+                    <details><summary style={{ cursor: "pointer", fontSize: 13 }}>See the instructions</summary><textarea readOnly value={gemText} style={{ width: "100%", minHeight: 160, fontSize: 12 }} /></details>
+                  </div>
+                )}
+                <label className="btn" style={{ flexDirection: "row", color: "inherit" }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => { e.preventDefault(); addGeminiPictures(e.dataTransfer.files); }}>
+                  Add picture from Gemini (or drop it here)
+                  <input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={(e) => { addGeminiPictures(e.target.files); e.target.value = ""; }} />
+                </label>
+              </div>
               {opt.renders.length > 0 && <div className="renders">
                 {opt.renders.map((r) => (
                   <figure key={r.id}>
