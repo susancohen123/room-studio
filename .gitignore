@@ -1,0 +1,13 @@
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Secrets and local data - never upload these
+.env
+.env.local
+.env*.local
+.data/
+.vercel/
+.claude/

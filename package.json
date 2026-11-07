@@ -1,0 +1,29 @@
+{
+  "name": "room-studio",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
+    "@vercel/blob": "^2.8.0",
+    "konva": "^10.9.0",
+    "next": "^16.4.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-konva": "19.3.2",
+    "replicate": "1.4.0"
+  },
+  "overrides": {
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "typescript": "^7.0.2"
+  }
+}
