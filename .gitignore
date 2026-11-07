@@ -11,3 +11,7 @@ next-env.d.ts
 .data/
 .vercel/
 .claude/
+
+.vercel
+.env*
+!.env.example
