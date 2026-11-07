@@ -178,7 +178,14 @@ export default function RoomEditor(props: {
     setSetupMsg("");
     try {
       const image = await designImage(1536, "image/jpeg");
-      const r = await fetch("/api/render", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ image, instruction }) });
+      // Send photos of the real products and materials, so the AI uses the exact items.
+      const references: { url: string; label: string }[] = [];
+      for (const id of new Set(opt.pieces.map((p) => p.pieceId))) {
+        const p = ws.pieces.find((x) => x.id === id);
+        if (p?.imageUrl) references.push({ url: p.imageUrl, label: [p.category || "Item", p.name, p.vendor, p.widthIn ? `${p.widthIn} in wide` : "", p.heightIn ? `${p.heightIn} in tall` : ""].filter(Boolean).join(", ") });
+      }
+      if (material) references.push({ url: material.imageUrl, label: `${material.kind === "tile" ? "Tile" : "Wallpaper"} for the marked wall area: ${material.name}${material.vendor ? `, ${material.vendor}` : ""}` });
+      const r = await fetch("/api/render", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ image, instruction, references }) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { if (j.setup) setSetupMsg(j.error); else toast(j.error ?? "That didn't work. Try again."); return; }
       const optionId = opt.id;
@@ -463,7 +470,7 @@ export default function RoomEditor(props: {
           {tab === "ai" && (
             <div className="stack">
               {setupMsg && <div className="warn">{setupMsg}</div>}
-              <p className="sub" style={{ margin: 0, fontSize: 13 }}>Turns your current design (photo, finish and pieces) into a realistic picture. Each one is saved below.</p>
+              <p className="sub" style={{ margin: 0, fontSize: 13 }}>Turns your current design (photo, finish and pieces) into a realistic picture. Photos of the pieces and materials you used are sent too, so the real products appear. Each picture is saved below.</p>
               <div className="chips">{PRESETS.map((p) => <button key={p.label} disabled={!!busy} onClick={() => runRender(p.text, p.label)}>{p.label}</button>)}</div>
               <label>Or describe it<textarea value={aiText} onChange={(e) => setAiText(e.target.value)} placeholder="Swap the rug for a large jute rug and add linen curtains" /></label>
               <button className="btn primary" disabled={!!busy || !aiText.trim()} onClick={() => { runRender(aiText, aiText.slice(0, 60)); setAiText(""); }}>Create picture</button>
