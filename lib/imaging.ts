@@ -136,18 +136,27 @@ export function flatten(
   return c;
 }
 
-/** Shrinks a photo before upload so the app stays fast. */
-export async function prepPhoto(file: File, maxW = 2000): Promise<{ blob: Blob; w: number; h: number }> {
-  const url = URL.createObjectURL(file);
+/** Shrinks a photo before upload so uploads are quick even on slower internet. */
+export async function prepPhoto(file: File, maxW = 1800): Promise<{ blob: Blob; w: number; h: number }> {
+  let source: CanvasImageSource & { width: number; height: number };
+  let url = "";
   try {
-    const img = await loadImage(url);
-    const s = Math.min(1, maxW / img.width);
-    const c = canvas(img.width * s, img.height * s);
-    c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
-    const blob = await new Promise<Blob>((r) => c.toBlob((b) => r(b!), "image/jpeg", 0.9));
+    // Fast path: the browser decodes and shrinks in one step.
+    const probe = await createImageBitmap(file);
+    const s = Math.min(1, maxW / probe.width);
+    source = s < 1 ? await createImageBitmap(file, { resizeWidth: Math.round(probe.width * s), resizeQuality: "high" }) : probe;
+  } catch {
+    url = URL.createObjectURL(file);
+    source = await loadImage(url);
+  }
+  try {
+    const s = Math.min(1, maxW / source.width);
+    const c = canvas(source.width * s, source.height * s);
+    c.getContext("2d")!.drawImage(source, 0, 0, c.width, c.height);
+    const blob = await new Promise<Blob>((r) => c.toBlob((b) => r(b!), "image/jpeg", 0.86));
     return { blob, w: c.width, h: c.height };
   } finally {
-    URL.revokeObjectURL(url);
+    if (url) URL.revokeObjectURL(url);
   }
 }
 

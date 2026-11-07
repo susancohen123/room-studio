@@ -22,12 +22,16 @@ const PRESETS: { label: string; text: string }[] = [
   { label: "Declutter", text: "Remove clutter and personal items, keep the furniture and finishes." },
 ];
 
+// Pictures already in memory (including ones just uploaded), so they show instantly.
+const imgCache = new Map<string, HTMLImageElement>();
+
 function useImg(src: string | undefined) {
-  const [img, setImg] = useState<HTMLImageElement | null>(null);
+  const [img, setImg] = useState<HTMLImageElement | null>(() => (src && imgCache.get(src)) || null);
   useEffect(() => {
     let live = true;
-    setImg(null);
-    if (src) loadImage(src).then((i) => live && setImg(i)).catch(() => {});
+    const hit = src ? imgCache.get(src) : undefined;
+    setImg(hit ?? null);
+    if (src && !hit) loadImage(src).then((i) => { imgCache.set(src, i); if (live) setImg(i); }).catch(() => {});
     return () => { live = false; };
   }, [src]);
   return img;
@@ -49,10 +53,11 @@ export default function RoomEditor(props: {
   const [modal, setModal] = useState<React.ReactNode>(null);
   const [aiText, setAiText] = useState("");
   const [setupMsg, setSetupMsg] = useState("");
+  const [saving, setSaving] = useState("");
+  const [preview, setPreview] = useState<string | null>(null);
   const [gemPreset, setGemPreset] = useState(PRESETS[0].text);
   const [gemText, setGemText] = useState("");
   const [copied, setCopied] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const trRef = useRef<Konva.Transformer>(null);
   const [boxW, setBoxW] = useState(0);
@@ -79,14 +84,17 @@ export default function RoomEditor(props: {
     }
   }, [room.photos.length, room.options.length, updRoom]);
 
-  useEffect(() => {
-    const el = boxRef.current;
+  // Measure the picture area whenever it appears (e.g. right after the first photo is added).
+  const roRef = useRef<ResizeObserver | null>(null);
+  const boxRef = useCallback((el: HTMLDivElement | null) => {
+    roRef.current?.disconnect();
+    roRef.current = null;
     if (!el) return;
     const ro = new ResizeObserver(() => setBoxW(el.clientWidth));
     ro.observe(el);
+    roRef.current = ro;
     setBoxW(el.clientWidth);
-    return () => ro.disconnect();
-  }, [photo?.id]);
+  }, []);
 
   // Stage size: fit width, but not taller than ~72% of the window.
   const aspect = photo ? photo.h / photo.w : 0.66;
@@ -283,21 +291,33 @@ export default function RoomEditor(props: {
   }
 
   async function addPhotos(files: FileList | null) {
-    if (!files?.length) return;
-    setBusy("Uploading…");
+    const list = Array.from(files ?? []);
+    if (!list.length) return;
+    let done = 0;
+    setSaving(`Saving ${list.length > 1 ? `${list.length} photos` : "photo"}…`);
+    let first = true;
+    // Shrink and upload up to 3 at a time; the first photo shows right away while it saves.
+    const one = async (f: File) => {
+      const { blob, w, h } = await prepPhoto(f);
+      const local = URL.createObjectURL(blob);
+      const img = await loadImage(local);
+      if (first) { first = false; setPreview(local); }
+      const url = await uploadBlob(blob, "photos", f.name);
+      imgCache.set(url, img);
+      const id = uid();
+      updRoom((r) => { r.photos.push({ id, url, name: f.name, w, h }); });
+      if (done === 0 && opt) updOpt((o) => { o.photoId = id; });
+      done++;
+      if (list.length > 1) setSaving(`Saved ${done} of ${list.length} photos…`);
+    };
     try {
-      const added: { id: string; url: string; name: string; w: number; h: number }[] = [];
-      for (const f of Array.from(files)) {
-        const { blob, w, h } = await prepPhoto(f);
-        const url = await uploadBlob(blob, "photos", f.name);
-        added.push({ id: uid(), url, name: f.name, w, h });
-      }
-      updRoom((r) => { r.photos.push(...added); });
-      if (opt) updOpt((o) => { o.photoId = added[0].id; });
+      const queue = [...list];
+      await Promise.all([0, 1, 2].map(async () => { while (queue.length) await one(queue.shift()!); }));
     } catch (e) {
       toast(e instanceof Error ? e.message : "Upload failed");
     } finally {
-      setBusy("");
+      setSaving("");
+      setPreview((p) => { if (p) URL.revokeObjectURL(p); return null; });
     }
   }
 
@@ -339,6 +359,14 @@ export default function RoomEditor(props: {
   );
 
   if (!room.photos.length || !opt || !photo) {
+    if (preview) {
+      return (
+        <>
+          {header}
+          <div className="stagebox"><img alt="" src={preview} style={{ width: "100%", display: "block" }} /><span className="hint">{saving || "Opening…"}</span></div>
+        </>
+      );
+    }
     return (
       <>
         {header}
@@ -347,7 +375,7 @@ export default function RoomEditor(props: {
           A photo of the space, a rendering, or a line drawing from your cabinet maker all work.
           <div style={{ marginTop: 14 }}>
             <label className="btn primary" style={{ flexDirection: "row", color: "var(--accent-ink)" }}>
-              {busy || "Upload pictures"}
+              {saving || "Upload pictures"}
               <input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={(e) => addPhotos(e.target.files)} />
             </label>
           </div>
@@ -430,7 +458,7 @@ export default function RoomEditor(props: {
                 </Layer>
               </Stage>
             ) : <p className="status" style={{ color: "#ddd", padding: 40 }}>Loading picture…</p>}
-            <span className="hint">{hint}</span>
+            <span className="hint">{saving || hint}</span>
             {busy && <div className="busy">{busy}</div>}
           </div>
 
