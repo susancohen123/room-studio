@@ -25,7 +25,18 @@ export function passwordMatches(input: string): boolean {
   return same(input, pw);
 }
 
+/**
+ * No password set:
+ * - on your own computer, the app opens without signing in;
+ * - online (Vercel), it stays locked unless PUBLIC_NO_PASSWORD=true is set on purpose.
+ */
+export function passwordOff(): boolean {
+  if (process.env.APP_PASSWORD) return false;
+  return !process.env.VERCEL || process.env.PUBLIC_NO_PASSWORD === "true";
+}
+
 export async function isSignedIn(): Promise<boolean> {
+  if (passwordOff()) return true;
   const jar = await cookies();
   const v = jar.get(COOKIE)?.value;
   return !!v && same(v, sessionToken());

@@ -18,7 +18,7 @@ type View =
 
 export type Update = (fn: (ws: Workspace) => void) => void;
 
-export default function Studio() {
+export default function Studio({ canSignOut = true }: { canSignOut?: boolean }) {
   const [ws, setWs] = useState<Workspace | null>(null);
   const [view, setView] = useState<View>(() => {
     if (typeof window === "undefined") return { s: "clients" };
@@ -288,7 +288,7 @@ export default function Studio() {
           <span className="status" aria-live="polite">{saveState}</span>
           <button className="btn ghost sm" onClick={() => setView({ s: "favorites" })}>★ Favorites</button>
           <button className="btn ghost sm" onClick={() => setView({ s: "library" })}>Library</button>
-          <button className="btn ghost sm" onClick={async () => { await flush(); await fetch("/api/logout", { method: "POST" }); window.location.href = "/login"; }}>Sign out</button>
+          {canSignOut && <button className="btn ghost sm" onClick={async () => { await flush(); await fetch("/api/logout", { method: "POST" }); window.location.href = "/login"; }}>Sign out</button>}
         </div>
       </header>
       <main className="wrap">{body}</main>
