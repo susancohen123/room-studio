@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Material, Paint, Piece, Workspace } from "@/lib/types";
 import { cutout, hexToRgb, uploadBlob, prepPhoto } from "@/lib/imaging";
 import { money } from "@/lib/pricing";
@@ -71,16 +71,29 @@ export default function Library({ ws, update, toast }: { ws: Workspace; update: 
       {tab === "pieces" && (ws.pieces.length ? (
         <div className="grid">
           {ws.pieces.filter((p) => match(p.name, p.vendor, p.category)).map((p) => (
-            <div key={p.id} className="card">
-              <div className="thumb" style={{ background: "var(--sunk)" }}>{p.imageUrl ? <img alt="" src={p.imageUrl} style={{ objectFit: "contain" }} /> : "Add a photo"}</div>
+            <div key={p.id} className="card piece-card">
+              <button className="thumb thumb-btn" style={{ background: "var(--sunk)" }} aria-label={p.imageUrl ? `Edit ${p.name}` : `Add a photo to ${p.name}`}
+                onClick={() => setModal(<Modal onClose={close}><PieceForm update={update} close={close} toast={toast} piece={p} focusPhoto={!p.imageUrl} /></Modal>)}>
+                {p.imageUrl ? <img alt="" src={p.imageUrl} style={{ objectFit: "contain" }} /> : <span className="addphoto">+ Add a photo</span>}
+              </button>
               <div className="body">
-                <h3 style={{ fontSize: 18 }}>{p.name}</h3>
+                {!p.imageUrl && <span className="badge-warn">Missing photo</span>}
+                <button className="titlebtn" onClick={() => setModal(<Modal onClose={close}><PieceForm update={update} close={close} toast={toast} piece={p} /></Modal>)}><h3 style={{ fontSize: 18 }}>{p.name}</h3></button>
                 <div className="meta">{[p.vendor, p.category].filter(Boolean).join(" · ")}{p.price ? ` · ${money(p.price)}` : ""}</div>
                 <div className="meta">{fmtIn(p.widthIn)} W × {fmtIn(p.depthIn)} D × {fmtIn(p.heightIn)} H</div>
                 <div className="row">
                   <button className="btn ghost sm" onClick={() => setModal(<Modal onClose={close}><PieceForm update={update} close={close} toast={toast} piece={p} /></Modal>)}>Edit</button>
                   {p.link && <a href={p.link} target="_blank" rel="noreferrer" className="btn ghost sm">Product page</a>}
                   <button className="star" aria-label={p.favorite ? "Unstar" : "Star"} onClick={() => update((w) => { const x = w.pieces.find((k) => k.id === p.id)!; x.favorite = !x.favorite; })}>{p.favorite ? "★" : "☆"}</button>
+                  <button className="btn ghost sm danger piece-delete" onClick={() => setModal(
+                    <Modal onClose={close}>
+                      <h2>Remove “{p.name}” from your library?</h2>
+                      <p className="sub">It will also disappear from any design options it was placed in. This can&apos;t be undone.</p>
+                      <div className="row" style={{ marginTop: 16 }}>
+                        <button className="btn danger" onClick={() => { update((w) => { w.pieces = w.pieces.filter((k) => k.id !== p.id); }); toast("Piece removed."); close(); }}>Remove</button>
+                        <button className="btn ghost" onClick={close}>Keep it</button>
+                      </div>
+                    </Modal>)}>Delete</button>
                 </div>
               </div>
             </div>
@@ -189,18 +202,29 @@ function MaterialForm({ update, close, toast }: { update: Update; close: () => v
   );
 }
 
-export function PieceForm({ update, close, toast, piece }: { update: Update; close: () => void; toast: (m: string) => void; piece?: Piece }) {
+export function PieceForm({ update, close, toast, piece, focusPhoto }: { update: Update; close: () => void; toast: (m: string) => void; piece?: Piece; focusPhoto?: boolean }) {
   const [d, setD] = useState<Omit<Piece, "id" | "imageUrl">>({
     name: piece?.name ?? "", vendor: piece?.vendor ?? "", category: piece?.category ?? "", price: piece?.price ?? 0, link: piece?.link ?? "",
     widthIn: piece?.widthIn ?? 0, depthIn: piece?.depthIn ?? 0, heightIn: piece?.heightIn ?? 0,
   });
   const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
   const [removeBg, setRemoveBg] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [photoErr, setPhotoErr] = useState("");
+  const [nameErr, setNameErr] = useState("");
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const hasPhoto = !!file || !!piece?.imageUrl;
+
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
+
   return (
-    <form className="stack" onSubmit={async (e) => {
+    <form className="stack" noValidate onSubmit={async (e) => {
       e.preventDefault();
-      if (!d.name.trim()) return;
+      const noName = !d.name.trim();
+      setNameErr(noName ? "Give this piece a name." : "");
+      setPhotoErr(hasPhoto ? "" : "Upload a product photo before saving — it's required to place this piece in a room.");
+      if (noName || !hasPhoto) return;
       setBusy(true);
       try {
         let imageUrl = piece?.imageUrl ?? "";
@@ -212,31 +236,58 @@ export function PieceForm({ update, close, toast, piece }: { update: Update; clo
           if (piece) Object.assign(w.pieces.find((k) => k.id === piece.id)!, d, { imageUrl });
           else w.pieces.push({ id: uid(), ...d, imageUrl });
         });
+        toast(piece ? "Piece updated." : "Piece saved to your library.");
         close();
       } catch (err) { toast(err instanceof Error ? err.message : "Upload failed"); setBusy(false); }
     }}>
       <h2>{piece ? "Edit piece" : "New piece"}</h2>
-      <label>Product photo{piece?.imageUrl ? " (leave empty to keep the current one)" : ""}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
+      <label>
+        <span>Product photo <span className="req">(required)</span>{piece?.imageUrl ? " — leave empty to keep the current one" : ""}</span>
+        <input type="file" accept="image/jpeg,image/png,image/webp" autoFocus={focusPhoto}
+          onChange={(e) => {
+            const f = e.target.files?.[0] ?? null;
+            setFile(f);
+            setPhotoErr("");
+            setPreview(f ? URL.createObjectURL(f) : null);
+          }} />
+        <span className="help">Required. Upload a product photo to place this piece in a room. Catalog photos on a plain background work best.</span>
+        {photoErr && <span className="err" role="alert">{photoErr}</span>}
+      </label>
+      {(preview || piece?.imageUrl) && <img className="formpreview" alt="Photo preview" src={preview ?? piece!.imageUrl} />}
       <label style={{ flexDirection: "row", alignItems: "center", gap: 8, fontWeight: 500 }}><input type="checkbox" checked={removeBg} onChange={(e) => setRemoveBg(e.target.checked)} /> Remove the plain background</label>
       <div className="two">
-        <label>Name<input value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} placeholder="Walnut nightstand" /></label>
-        <label>Vendor<input value={d.vendor} onChange={(e) => setD({ ...d, vendor: e.target.value })} /></label>
+        <label>Name<input value={d.name} onChange={(e) => { setD({ ...d, name: e.target.value }); setNameErr(""); }} placeholder="Walnut nightstand" />{nameErr && <span className="err" role="alert">{nameErr}</span>}</label>
+        <label><span>Vendor <span className="opt">(optional)</span></span><input value={d.vendor} onChange={(e) => setD({ ...d, vendor: e.target.value })} /></label>
       </div>
       <div className="two">
-        <label>Category<input value={d.category} onChange={(e) => setD({ ...d, category: e.target.value })} placeholder="Lighting, seating, rugs…" /></label>
-        <label>Price ($)<input type="number" min={0} step={0.01} value={d.price || ""} onChange={(e) => setD({ ...d, price: Number(e.target.value) })} /></label>
+        <label><span>Category <span className="opt">(optional)</span></span><input value={d.category} onChange={(e) => setD({ ...d, category: e.target.value })} placeholder="Lighting, seating, rugs…" /></label>
+        <label><span>Price ($) <span className="opt">(optional)</span></span><input type="number" min={0} step={0.01} value={d.price || ""} onChange={(e) => setD({ ...d, price: Number(e.target.value) })} /></label>
       </div>
       <div className="three">
-        <FtIn label="Width" value={d.widthIn} onChange={(v) => setD({ ...d, widthIn: v })} />
-        <FtIn label="Depth" value={d.depthIn} onChange={(v) => setD({ ...d, depthIn: v })} />
-        <FtIn label="Height" value={d.heightIn} onChange={(v) => setD({ ...d, heightIn: v })} />
+        <FtIn label="Width (optional)" value={d.widthIn} onChange={(v) => setD({ ...d, widthIn: v })} />
+        <FtIn label="Depth (optional)" value={d.depthIn} onChange={(v) => setD({ ...d, depthIn: v })} />
+        <FtIn label="Height (optional)" value={d.heightIn} onChange={(v) => setD({ ...d, heightIn: v })} />
       </div>
-      <label>Product link<input type="url" value={d.link} onChange={(e) => setD({ ...d, link: e.target.value })} placeholder="https://" /></label>
-      <div className="row">
-        <button className="btn primary" disabled={busy || !d.name.trim()}>{busy ? "Working…" : "Save"}</button>
-        {piece && <button type="button" className="btn ghost danger" onClick={() => { update((w) => { w.pieces = w.pieces.filter((k) => k.id !== piece.id); }); close(); }}>Remove</button>}
-        <button type="button" className="btn ghost" onClick={close}>Cancel</button>
-      </div>
+      <label>
+        <span>Product link <span className="opt">(optional)</span></span>
+        <input type="url" value={d.link} onChange={(e) => setD({ ...d, link: e.target.value })} placeholder="https://" />
+        <span className="help">Links to the product page for your reference. This does not import an image — use the photo upload above to add the product image.</span>
+      </label>
+      {confirmRemove && piece ? (
+        <div className="warn row" style={{ justifyContent: "space-between" }}>
+          <span>Remove “{piece.name}” from your library?</span>
+          <span className="row">
+            <button type="button" className="btn sm danger" onClick={() => { update((w) => { w.pieces = w.pieces.filter((k) => k.id !== piece.id); }); toast("Piece removed."); close(); }}>Remove</button>
+            <button type="button" className="btn sm ghost" onClick={() => setConfirmRemove(false)}>Keep it</button>
+          </span>
+        </div>
+      ) : (
+        <div className="row">
+          <button className="btn primary" disabled={busy}>{busy ? "Working…" : "Save"}</button>
+          {piece && <button type="button" className="btn ghost danger" onClick={() => setConfirmRemove(true)}>Remove</button>}
+          <button type="button" className="btn ghost" onClick={close}>Cancel</button>
+        </div>
+      )}
     </form>
   );
 }

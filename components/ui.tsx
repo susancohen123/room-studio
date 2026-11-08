@@ -35,10 +35,10 @@ export function FtIn({ label, value, onChange }: { label: string; value: number;
     <label>
       {label}
       <span className="row" style={{ flexWrap: "nowrap" }}>
-        <input type="number" min={0} value={ft || ""} placeholder="0" aria-label={`${label} feet`} style={{ width: "100%" }}
+        <input type="number" min={0} value={ft || ""} placeholder="e.g. 12" aria-label={`${label} feet`} style={{ width: "100%" }}
           onChange={(e) => onChange(Number(e.target.value || 0) * 12 + inch)} />
         <span>ft</span>
-        <input type="number" min={0} max={11.9} step={0.5} value={inch || ""} placeholder="0" aria-label={`${label} inches`} style={{ width: "100%" }}
+        <input type="number" min={0} max={11.9} step={0.5} value={inch || ""} placeholder="0–11" aria-label={`${label} inches`} style={{ width: "100%" }}
           onChange={(e) => onChange(ft * 12 + Number(e.target.value || 0))} />
         <span>in</span>
       </span>
@@ -52,3 +52,6 @@ export const fmtIn = (inches: number) => {
   const i = Math.round((inches - ft * 12) * 10) / 10;
   return ft ? `${ft}′${i ? ` ${i}″` : ""}` : `${i}″`;
 };
+
+/** "1 room", "2 rooms" */
+export const plural = (n: number, word: string) => `${n} ${n === 1 ? word : `${word}s`}`;

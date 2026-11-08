@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { DesignOption, Room, Workspace } from "@/lib/types";
 import { fmtIn } from "./ui";
+import { keyHeaders, openSettings, useSetup } from "@/lib/setup";
 
 interface Line { who: "me" | "ai"; text: string; sources?: { url: string; title: string }[] }
 
@@ -26,6 +27,7 @@ export default function Chat({ ws, room, opt, designImage, onAction }: {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [setup, setSetup] = useState("");
+  const conn = useSetup();
   const end = useRef<HTMLDivElement>(null);
 
   useEffect(() => { memory.set(opt.id, { lines, history: history.current }); end.current?.scrollIntoView({ block: "nearest" }); }, [lines, opt.id]);
@@ -43,7 +45,7 @@ export default function Chat({ ws, room, opt, designImage, onAction }: {
 
   async function send(msg: string) {
     const t = msg.trim();
-    if (!t || busy) return;
+    if (!t || busy || !conn.chat) return;
     setText("");
     setBusy(true);
     setSetup("");
@@ -53,7 +55,7 @@ export default function Chat({ ws, room, opt, designImage, onAction }: {
       try { image = await designImage(1024, "image/jpeg"); } catch {}
       const r = await fetch("/api/assistant", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...keyHeaders() },
         body: JSON.stringify({ history: history.current, text: t, image, context: context() }),
       });
       const j = await r.json().catch(() => ({}));
@@ -74,8 +76,14 @@ export default function Chat({ ws, room, opt, designImage, onAction }: {
 
   return (
     <div className="chat">
-      {setup && <div className="warn">{setup}</div>}
-      {!lines.length && (
+      {conn.loaded && !conn.chat ? (
+        <div className="warn stack" style={{ gap: 6 }}>
+          <b>Chat isn't connected yet.</b>
+          <span>Add your Anthropic API key in Settings to turn on the chat assistant.</span>
+          <button className="btn sm primary" style={{ alignSelf: "flex-start" }} onClick={openSettings}>Go to Settings</button>
+        </div>
+      ) : setup ? <div className="warn">{setup} <button className="linkbtn" onClick={openSettings}>Go to Settings →</button></div> : null}
+      {!lines.length && conn.chat && (
         <>
           <p className="sub" style={{ margin: 0, fontSize: 13 }}>Describe a change in your own words and it&apos;s applied to this option. You can also ask me to find paint colors, products or stores.</p>
           <div className="chips">{STARTERS.map((s) => <button key={s} onClick={() => send(s)}>{s}</button>)}</div>
@@ -98,7 +106,7 @@ export default function Chat({ ws, room, opt, designImage, onAction }: {
       <form className="row" style={{ flexWrap: "nowrap" }} onSubmit={(e) => { e.preventDefault(); send(text); }}>
         <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Try: make the walls Sherwin-Williams Sea Salt" style={{ flex: 1, minHeight: 44 }}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(text); } }} aria-label="Message the design assistant" />
-        <button className="btn primary" disabled={busy || !text.trim()}>Send</button>
+        <button className="btn primary" disabled={busy || !text.trim() || !conn.chat}>Send</button>
       </form>
     </div>
   );

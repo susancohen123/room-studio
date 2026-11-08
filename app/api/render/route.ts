@@ -16,7 +16,7 @@ export async function POST(req: Request) {
     .filter((r) => typeof r?.url === "string" && r.url.startsWith("/api/files/") && typeof r.label === "string")
     .map((r) => ({ url: r.url, label: r.label.slice(0, 200) }));
   try {
-    const url = await aiEditImage(image, instruction, refs);
+    const url = await aiEditImage(image, instruction, refs, req.headers.get("x-gemini-key") || undefined);
     return Response.json({ url });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Something went wrong.";

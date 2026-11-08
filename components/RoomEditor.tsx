@@ -9,6 +9,8 @@ import type { Update } from "./Studio";
 import { Modal, fmtIn, uid } from "./ui";
 import { PieceForm } from "./Library";
 import Chat from "./Chat";
+import ColorField from "./ColorField";
+import { keyHeaders, openSettings, useSetup } from "@/lib/setup";
 
 type Tool = "arrange" | "brush" | "erase" | "outline";
 type PanelTab = "finish" | "pieces" | "price" | "ai" | "chat";
@@ -38,12 +40,13 @@ function useImg(src: string | undefined) {
 }
 
 export default function RoomEditor(props: {
-  ws: Workspace; room: Room; path: [string, string, string]; clientName: string; update: Update;
+  ws: Workspace; room: Room; path: [string, string, string]; clientName: string; homeName: string; update: Update;
   toast: (m: string) => void; onEditRoom: () => void; onDeleteRoom: () => void;
 }) {
   const { ws, room, path, update, toast } = props;
   const [optId, setOptId] = useState<string | null>(room.options[0]?.id ?? null);
   const [tool, setTool] = useState<Tool>("arrange");
+  const setup = useSetup();
   const [tab, setTab] = useState<PanelTab>("finish");
   const [brush, setBrush] = useState(40);
   const [selected, setSelected] = useState<string | null>(null);
@@ -185,6 +188,11 @@ export default function RoomEditor(props: {
 
   async function runRender(instruction: string, label: string) {
     if (!opt) return;
+    if (!setup.pictures) {
+      toast("AI pictures aren't set up yet. Add your Gemini key in Settings, or use “Send to Gemini” below.");
+      setSetupMsg("AI pictures aren't set up yet.");
+      return;
+    }
     setBusy("Creating the picture… this takes about a minute");
     setSetupMsg("");
     try {
@@ -196,7 +204,7 @@ export default function RoomEditor(props: {
         if (p?.imageUrl) references.push({ url: p.imageUrl, label: [p.category || "Item", p.name, p.vendor, p.widthIn ? `${p.widthIn} in wide` : "", p.heightIn ? `${p.heightIn} in tall` : ""].filter(Boolean).join(", ") });
       }
       if (material) references.push({ url: material.imageUrl, label: `${material.kind === "tile" ? "Tile" : "Wallpaper"} for the marked wall area: ${material.name}${material.vendor ? `, ${material.vendor}` : ""}` });
-      const r = await fetch("/api/render", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ image, instruction, references }) });
+      const r = await fetch("/api/render", { method: "POST", headers: { "content-type": "application/json", ...keyHeaders() }, body: JSON.stringify({ image, instruction, references }) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { if (j.setup) setSetupMsg(j.error); else toast(j.error ?? "That didn't work. Try again."); return; }
       const optionId = opt.id;
@@ -322,15 +330,20 @@ export default function RoomEditor(props: {
   }
 
   function setFinish(f: Finish) {
+    const hadFinish = !!opt?.finish;
     updOpt((o) => { o.finish = f; });
-    if (!opt?.strokes.some((s) => !s.erase)) {
+    // Only nudge once (not on every color change while dragging the picker).
+    if (!hadFinish && !opt?.strokes.some((s) => !s.erase)) {
       setTool("outline");
       toast("Now outline the wall (click its corners), or switch to Brush and paint over it.");
     }
   }
 
   function placePiece(p: Piece) {
-    if (!p.imageUrl) { toast("Add a photo to this piece first (Library)."); return; }
+    if (!p.imageUrl) {
+      toast(`“${p.name}” has no photo yet. Click Edit next to it to add one.`);
+      return;
+    }
     // Size it from real dimensions when the room width is known.
     const w = room.widthIn && p.widthIn ? Math.min(0.9, Math.max(0.05, p.widthIn / room.widthIn)) : 0.25;
     const u = uid();
@@ -343,9 +356,11 @@ export default function RoomEditor(props: {
   const header = (
     <div className="head">
       <div>
-        <div className="eyebrow">{props.clientName} · Room</div>
+        <div className="eyebrow">{props.clientName} · {props.homeName}</div>
         <h1>{room.name}</h1>
-        <p className="sub">{fmtIn(room.widthIn)} wide × {fmtIn(room.depthIn)} deep · {fmtIn(room.heightIn)} ceiling</p>
+        <p className="sub">{room.widthIn > 0 && room.depthIn > 0
+          ? <>{fmtIn(room.widthIn)} wide × {fmtIn(room.depthIn)} deep · {fmtIn(room.heightIn)} ceiling</>
+          : <><button className="dim-prompt" onClick={props.onEditRoom}>Add room dimensions →</button>{room.heightIn > 0 && <> · {fmtIn(room.heightIn)} ceiling</>}</>}</p>
       </div>
       <div className="row">
         <label className="btn" style={{ flexDirection: "row", color: "inherit" }}>
@@ -370,16 +385,15 @@ export default function RoomEditor(props: {
     return (
       <>
         {header}
-        <div className="empty">
-          <strong>Add a picture of this room</strong>
-          A photo of the space, a rendering, or a line drawing from your cabinet maker all work.
-          <div style={{ marginTop: 14 }}>
-            <label className="btn primary" style={{ flexDirection: "row", color: "var(--accent-ink)" }}>
-              {saving || "Upload pictures"}
-              <input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={(e) => addPhotos(e.target.files)} />
-            </label>
-          </div>
-        </div>
+        <label className="dropzone"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => { e.preventDefault(); addPhotos(e.dataTransfer.files); }}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" /></svg>
+          <strong>Add a photo of your room to get started</strong>
+          <span>A photo of the space, a rendering, or a line drawing from your cabinet maker all work. Click here or drop pictures in.</span>
+          <span className="btn primary" style={{ color: "var(--accent-ink)" }}>{saving || "Upload photo"}</span>
+          <input type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={(e) => { addPhotos(e.target.files); e.target.value = ""; }} />
+        </label>
       </>
     );
   }
@@ -413,7 +427,7 @@ export default function RoomEditor(props: {
           </div>
 
           <div className="row">
-            <input aria-label="Option name" value={opt.name} onChange={(e) => updOpt((o) => { o.name = e.target.value; })} style={{ width: 180 }} />
+            <input className="optname" aria-label="Option name (click to rename)" title="Click to rename" value={opt.name} onChange={(e) => updOpt((o) => { o.name = e.target.value; })} />
             <button className="star" aria-label={opt.favorite ? "Remove from favorites" : "Add to favorites"} onClick={() => updOpt((o) => { o.favorite = !o.favorite; })}>{opt.favorite ? "★" : "☆"}</button>
             <span className="spacer" />
             <div className="seg" role="group" aria-label="Tools">
@@ -457,7 +471,7 @@ export default function RoomEditor(props: {
                   {live && !live.erase && <Line points={live.pts.map((v, i) => (i % 2 ? v * H : v * W))} stroke="rgba(255,255,255,.35)" strokeWidth={live.size * W} lineCap="round" lineJoin="round" listening={false} />}
                 </Layer>
               </Stage>
-            ) : <p className="status" style={{ color: "#ddd", padding: 40 }}>Loading picture…</p>}
+            ) : <p className="status" style={{ padding: 40 }}>Loading picture…</p>}
             <span className="hint">{saving || hint}</span>
             {busy && <div className="busy">{busy}</div>}
           </div>
@@ -491,7 +505,7 @@ export default function RoomEditor(props: {
 
           {tab === "finish" && (
             <div className="stack">
-              {!opt.strokes.some((s) => !s.erase) && <div className="note">First mark the area: use <b>Outline wall</b> to click its corners, or <b>Brush</b> to paint over it. Then pick a finish below.</div>}
+              {!opt.strokes.some((s) => !s.erase) && <div className="note">First mark the area: use <b>Outline wall</b> to click its corners, or <b>Brush</b> to paint over it. Click <b>Finish shape</b> in the toolbar to close the outline when you&apos;re done. Then pick a finish below.</div>}
               {opt.finish && (
                 <div className="item">
                   <div style={{ width: 40, height: 40, borderRadius: 6, background: opt.finish.kind === "paint" ? opt.finish.hex : `url(${material?.imageUrl}) center/cover` }} />
@@ -516,9 +530,10 @@ export default function RoomEditor(props: {
                   ))}
                 </div>
               ) : <p className="sub" style={{ fontSize: 13 }}>No saved paints yet. Add them in the Library, or ask the chat assistant to find a color.</p>}
-              <label style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>Try any color
-                <input type="color" defaultValue="#c8c2b4" onChange={(e) => setFinish({ kind: "paint", hex: e.target.value, name: `Custom ${e.target.value}`, strength: opt.finish?.strength ?? 0.9, scale: 0.15 })} />
-              </label>
+              <ColorField
+                value={opt.finish?.kind === "paint" && opt.finish.hex ? opt.finish.hex : "#c8c2b4"}
+                onChange={(hex) => setFinish({ kind: "paint", hex, name: `Custom ${hex.toUpperCase()}`, strength: opt.finish?.strength ?? 0.9, scale: 0.15 })}
+              />
               <h3 style={{ fontSize: 15, fontWeight: 700 }}>Wallpaper & tile</h3>
               {ws.materials.length ? (
                 <div className="swatches">
@@ -555,9 +570,15 @@ export default function RoomEditor(props: {
                 <div className="list">
                   {[...ws.pieces].sort((a, b) => Number(!!b.favorite) - Number(!!a.favorite)).map((p) => (
                     <div key={p.id} className="item">
-                      {p.imageUrl ? <img alt="" src={p.imageUrl} /> : <div style={{ width: 54, height: 54, background: "var(--sunk)", borderRadius: 6 }} />}
-                      <div className="grow"><div className="t">{p.favorite ? "★ " : ""}{p.name}</div><div className="m">{fmtIn(p.widthIn)} W{p.price ? ` · ${money(p.price)}` : ""}{p.vendor ? ` · ${p.vendor}` : ""}</div></div>
-                      <button className="btn sm" onClick={() => placePiece(p)}>Place</button>
+                      {p.imageUrl ? <img alt="" src={p.imageUrl} /> : <div className="thumb-empty" title="No photo yet" />}
+                      <div className="grow">
+                        <div className="t">{p.favorite ? "★ " : ""}{p.name}</div>
+                        <div className="m">{p.imageUrl ? <>{fmtIn(p.widthIn)} W{p.price ? ` · ${money(p.price)}` : ""}{p.vendor ? ` · ${p.vendor}` : ""}</> : <span className="badge-warn">Missing photo</span>}</div>
+                      </div>
+                      <div className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
+                        <button className="btn sm ghost" onClick={() => setModal(<Modal onClose={closeModal}><PieceForm update={update} close={closeModal} toast={toast} piece={p} focusPhoto={!p.imageUrl} /></Modal>)}>Edit</button>
+                        <button className="btn sm" onClick={() => placePiece(p)}>Place</button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -580,11 +601,12 @@ export default function RoomEditor(props: {
 
           {tab === "ai" && (
             <div className="stack">
-              {setupMsg && <div className="warn">{setupMsg}</div>}
+              {setupMsg && <div className="warn">{setupMsg} <button className="linkbtn" onClick={openSettings}>Go to Settings →</button></div>}
               <p className="sub" style={{ margin: 0, fontSize: 13 }}>Turns your current design (photo, finish and pieces) into a realistic picture. Photos of the pieces and materials you used are sent too, so the real products appear. Each picture is saved below.</p>
-              <div className="chips">{PRESETS.map((p) => <button key={p.label} disabled={!!busy} onClick={() => runRender(p.text, p.label)}>{p.label}</button>)}</div>
+              <div className="chips">{PRESETS.map((p) => <button key={p.label} className={setup.pictures ? "" : "setup-needed"} aria-disabled={!setup.pictures} disabled={!!busy} onClick={() => runRender(p.text, p.label)}>{p.label}</button>)}</div>
               <label>Or describe it<textarea value={aiText} onChange={(e) => setAiText(e.target.value)} placeholder="Swap the rug for a large jute rug and add linen curtains" /></label>
-              <button className="btn primary" disabled={!!busy || !aiText.trim()} onClick={() => { runRender(aiText, aiText.slice(0, 60)); setAiText(""); }}>Create picture</button>
+              <button className={`btn primary${setup.pictures ? "" : " setup-needed"}`} aria-disabled={!setup.pictures} disabled={!!busy || (setup.pictures && !aiText.trim())} onClick={() => { if (!aiText.trim() && setup.pictures) return; runRender(aiText, aiText.slice(0, 60)); if (setup.pictures) setAiText(""); }}>Create picture</button>
+              {setup.loaded && !setup.pictures && <span className="setup-note">(Setup required) <button className="linkbtn" onClick={openSettings}>Add your Gemini key in Settings</button>, or use “Send to Gemini” below for free.</span>}
               <button className="btn" onClick={async () => download(await designImage(3000), fileName(room.name, opt.name))}>Download current design (PNG)</button>
 
               <div className="stack" style={{ borderTop: "1px solid var(--line)", paddingTop: 12, gap: 8 }}>

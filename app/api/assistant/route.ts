@@ -82,9 +82,10 @@ const CLIENT_TOOLS = new Set(["set_wall_paint", "ai_edit_picture", "save_paint_c
 export async function POST(req: Request) {
   const denied = await requireAuth();
   if (denied) return denied;
-  if (!process.env.ANTHROPIC_API_KEY) {
+  const apiKey = req.headers.get("x-anthropic-key") || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
     return Response.json(
-      { error: "The chat assistant isn't connected yet. Add your Anthropic key to the settings file.", setup: true },
+      { error: "The chat assistant isn't connected yet. Go to Settings to add your Anthropic API key.", setup: true },
       { status: 501 },
     );
   }
@@ -101,7 +102,7 @@ export async function POST(req: Request) {
   const actions: { name: string; input: Record<string, unknown> }[] = [];
   const replies: string[] = [];
   const sources = new Map<string, string>();
-  const client = new Anthropic();
+  const client = new Anthropic({ apiKey });
 
   try {
     for (let i = 0; i < 8; i++) {
@@ -152,7 +153,7 @@ export async function POST(req: Request) {
     }
   } catch (e) {
     if (e instanceof Anthropic.AuthenticationError) {
-      return Response.json({ error: "The Anthropic key in the settings file isn't valid.", setup: true }, { status: 401 });
+      return Response.json({ error: "Your Anthropic key wasn't accepted. Check it in Settings.", setup: true }, { status: 401 });
     }
     if (e instanceof Anthropic.RateLimitError) {
       return Response.json({ error: "The assistant is busy. Try again in a moment." }, { status: 429 });

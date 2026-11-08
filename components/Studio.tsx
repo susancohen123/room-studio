@@ -3,8 +3,9 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Client, Home, Room, Workspace } from "@/lib/types";
 import { emptyWorkspace } from "@/lib/types";
-import { FtIn, Modal, fmtIn, uid, useToast } from "./ui";
+import { FtIn, Modal, fmtIn, plural, uid, useToast } from "./ui";
 import Library from "./Library";
+import Settings from "./Settings";
 
 const RoomEditor = dynamic(() => import("./RoomEditor"), { ssr: false, loading: () => <p className="status">Opening room…</p> });
 
@@ -14,7 +15,8 @@ type View =
   | { s: "home"; c: string; h: string }
   | { s: "room"; c: string; h: string; r: string }
   | { s: "library" }
-  | { s: "favorites" };
+  | { s: "favorites" }
+  | { s: "settings" };
 
 export type Update = (fn: (ws: Workspace) => void) => void;
 
@@ -46,6 +48,11 @@ export default function Studio({ canSignOut = true }: { canSignOut?: boolean }) 
   }, []);
 
   useEffect(() => { try { sessionStorage.setItem("rs_view", JSON.stringify(view)); } catch {} }, [view]);
+  useEffect(() => {
+    const go = () => setView({ s: "settings" });
+    window.addEventListener("rs-open-settings", go);
+    return () => window.removeEventListener("rs-open-settings", go);
+  }, []);
 
   const flush = useCallback(async () => {
     if (!dirty.current || !latest.current) return;
@@ -147,14 +154,20 @@ export default function Studio({ canSignOut = true }: { canSignOut?: boolean }) 
     );
   }
 
-  function confirmDelete(what: string, run: () => void) {
+  function confirmDelete(level: "client" | "home" | "room", what: string, run: () => void) {
+    const detail = {
+      client: "All homes, rooms, and design options for this client will be removed.",
+      home: "All rooms and design options in this home will be removed.",
+      room: "All design options for this room will be removed.",
+    }[level];
     setForm(
       <Modal onClose={close}>
-        <h2>Delete {what}?</h2>
-        <p className="sub">This removes it and everything inside it from Room Studio. It can&apos;t be undone.</p>
+        <h2>Delete this {level}?</h2>
+        <p style={{ margin: "0 0 4px", fontWeight: 600 }}>{what}</p>
+        <p className="sub">{detail} This can&apos;t be undone.</p>
         <div className="row" style={{ marginTop: 16 }}>
-          <button className="btn danger" onClick={() => { run(); close(); }}>Delete</button>
-          <button className="btn ghost" onClick={close}>Keep it</button>
+          <button className="btn danger armed" onClick={() => { run(); close(); }}>Delete</button>
+          <button className="btn ghost" onClick={close}>Cancel</button>
         </div>
       </Modal>,
     );
@@ -163,6 +176,7 @@ export default function Studio({ canSignOut = true }: { canSignOut?: boolean }) 
   // ---------- breadcrumbs ----------
   const crumbs: { label: string; go?: View }[] = [{ label: "Clients", go: { s: "clients" } }];
   if (view.s === "library") crumbs.push({ label: "Library" });
+  if (view.s === "settings") crumbs.push({ label: "Settings" });
   if (view.s === "favorites") crumbs.push({ label: "Favorites" });
   if (client) crumbs.push({ label: client.name, go: { s: "client", c: client.id } });
   if (client && home) crumbs.push({ label: home.label, go: { s: "home", c: client.id, h: home.id } });
@@ -172,7 +186,9 @@ export default function Studio({ canSignOut = true }: { canSignOut?: boolean }) 
   const photoOf = (r: Room) => r.options.find((o) => o.renders[0])?.renders[0]?.url ?? r.photos[0]?.url;
 
   let body: React.ReactNode;
-  if (view.s === "library") {
+  if (view.s === "settings") {
+    body = <Settings />;
+  } else if (view.s === "library") {
     body = <Library ws={ws} update={update} toast={toast} />;
   } else if (view.s === "favorites") {
     const favs = ws.clients.flatMap((c) => c.homes.flatMap((h) => h.rooms.flatMap((r) => r.options.filter((o) => o.favorite).map((o) => ({ c, h, r, o })))));
@@ -202,7 +218,7 @@ export default function Studio({ canSignOut = true }: { canSignOut?: boolean }) 
           <div className="grid">
             {ws.clients.map((c) => (
               <button key={c.id} className="card" onClick={() => setView({ s: "client", c: c.id })}>
-                <div className="body"><h3>{c.name}</h3><div className="meta">{c.homes.length} {c.homes.length === 1 ? "home" : "homes"} · {c.homes.reduce((t, h) => t + h.rooms.length, 0)} rooms</div></div>
+                <div className="body"><h3>{c.name}</h3><div className="meta">{plural(c.homes.length, "home")} · {plural(c.homes.reduce((t, h) => t + h.rooms.length, 0), "room")}</div></div>
               </button>
             ))}
           </div>
@@ -216,7 +232,7 @@ export default function Studio({ canSignOut = true }: { canSignOut?: boolean }) 
           <div><div className="eyebrow">Client</div><h1>{client.name}</h1>{client.notes && <p className="sub">{client.notes}</p>}</div>
           <div className="row">
             <button className="btn ghost" onClick={() => clientForm(client)}>Edit</button>
-            <button className="btn ghost danger" onClick={() => confirmDelete(client.name, () => { update((w) => { w.clients = w.clients.filter((k) => k.id !== client.id); }); setView({ s: "clients" }); })}>Delete</button>
+            <button className="btn ghost danger" onClick={() => confirmDelete("client", client.name, () => { update((w) => { w.clients = w.clients.filter((k) => k.id !== client.id); }); setView({ s: "clients" }); })}>Delete</button>
             <button className="btn primary" onClick={() => homeForm(client.id)}>+ New home</button>
           </div>
         </div>
@@ -225,7 +241,7 @@ export default function Studio({ canSignOut = true }: { canSignOut?: boolean }) 
             {client.homes.map((h) => (
               <button key={h.id} className="card" onClick={() => setView({ s: "home", c: client.id, h: h.id })}>
                 <div className="thumb">{h.rooms.map(photoOf).find(Boolean) ? <img alt="" src={h.rooms.map(photoOf).find(Boolean)} /> : "No photos yet"}</div>
-                <div className="body"><h3>{h.label}</h3><div className="meta">{h.address || `${h.rooms.length} rooms`}</div></div>
+                <div className="body"><h3>{h.label}</h3><div className="meta">{[h.address, plural(h.rooms.length, "room")].filter(Boolean).join(" · ")}</div></div>
               </button>
             ))}
           </div>
@@ -239,7 +255,7 @@ export default function Studio({ canSignOut = true }: { canSignOut?: boolean }) 
           <div><div className="eyebrow">Home</div><h1>{home.label}</h1>{home.address && <p className="sub">{home.address}</p>}</div>
           <div className="row">
             <button className="btn ghost" onClick={() => homeForm(client.id, home)}>Edit</button>
-            <button className="btn ghost danger" onClick={() => confirmDelete(home.label, () => { update((w) => { const c = w.clients.find((k) => k.id === client.id)!; c.homes = c.homes.filter((k) => k.id !== home.id); }); setView({ s: "client", c: client.id }); })}>Delete</button>
+            <button className="btn ghost danger" onClick={() => confirmDelete("home", home.label, () => { update((w) => { const c = w.clients.find((k) => k.id === client.id)!; c.homes = c.homes.filter((k) => k.id !== home.id); }); setView({ s: "client", c: client.id }); })}>Delete</button>
             <button className="btn primary" onClick={() => setForm(<Modal onClose={close}><RoomForm cId={client.id} hId={home.id} /></Modal>)}>+ New room</button>
           </div>
         </div>
@@ -248,7 +264,7 @@ export default function Studio({ canSignOut = true }: { canSignOut?: boolean }) 
             {home.rooms.map((r) => (
               <button key={r.id} className="card" onClick={() => setView({ s: "room", c: client.id, h: home.id, r: r.id })}>
                 <div className="thumb">{photoOf(r) ? <img alt="" src={photoOf(r)} /> : "No photos yet"}</div>
-                <div className="body"><h3>{r.name}</h3><div className="meta">{fmtIn(r.widthIn)} × {fmtIn(r.depthIn)} · {r.options.length} options</div></div>
+                <div className="body"><h3>{r.name}</h3><div className="meta">{r.widthIn && r.depthIn ? `${fmtIn(r.widthIn)} × ${fmtIn(r.depthIn)} · ` : ""}{plural(r.options.length, "option")}</div></div>
               </button>
             ))}
           </div>
@@ -263,10 +279,11 @@ export default function Studio({ canSignOut = true }: { canSignOut?: boolean }) 
         room={room}
         path={[client.id, home.id, room.id]}
         clientName={client.name}
+        homeName={home.label}
         update={update}
         toast={toast}
         onEditRoom={() => setForm(<Modal onClose={close}><RoomForm cId={client.id} hId={home.id} r={room} /></Modal>)}
-        onDeleteRoom={() => confirmDelete(room.name, () => { update((w) => { const h = w.clients.find((k) => k.id === client.id)!.homes.find((k) => k.id === home.id)!; h.rooms = h.rooms.filter((k) => k.id !== room.id); }); setView({ s: "home", c: client.id, h: home.id }); })}
+        onDeleteRoom={() => confirmDelete("room", room.name, () => { update((w) => { const h = w.clients.find((k) => k.id === client.id)!.homes.find((k) => k.id === home.id)!; h.rooms = h.rooms.filter((k) => k.id !== room.id); }); setView({ s: "home", c: client.id, h: home.id }); })}
       />
     );
   }
@@ -288,6 +305,7 @@ export default function Studio({ canSignOut = true }: { canSignOut?: boolean }) 
           <span className="status" aria-live="polite">{saveState}</span>
           <button className="btn ghost sm" onClick={() => setView({ s: "favorites" })}>★ Favorites</button>
           <button className="btn ghost sm" onClick={() => setView({ s: "library" })}>Library</button>
+          <button className="btn ghost sm" onClick={() => setView({ s: "settings" })}>Settings</button>
           {canSignOut && <button className="btn ghost sm" onClick={async () => { await flush(); await fetch("/api/logout", { method: "POST" }); window.location.href = "/login"; }}>Sign out</button>}
         </div>
       </header>

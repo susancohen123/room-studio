@@ -16,7 +16,8 @@ const LOOK =
   "windows, doors, ceiling and proportions exactly the same. Make every surface and piece of furniture look " +
   "photorealistic, with natural shadows, reflections and light that matches the room.";
 
-export function engine(): "google" | "replicate" | null {
+export function engine(geminiKey?: string): "google" | "replicate" | null {
+  if (geminiKey) return "google";
   const pick = (process.env.IMAGE_ENGINE || "").toLowerCase();
   if (pick === "google" && process.env.GEMINI_API_KEY) return "google";
   if (pick === "replicate" && process.env.REPLICATE_API_TOKEN) return "replicate";
@@ -25,14 +26,14 @@ export function engine(): "google" | "replicate" | null {
   return null;
 }
 
-export async function aiEditImage(imageDataUrl: string, instruction: string, refs: Reference[] = []): Promise<string> {
-  const which = engine();
+export async function aiEditImage(imageDataUrl: string, instruction: string, refs: Reference[] = [], geminiKey?: string): Promise<string> {
+  const which = engine(geminiKey);
   if (!which) {
-    throw new SetupNeeded("One-click AI pictures need a Google (Gemini) key in the settings file. For no extra cost, use \"Send to Gemini\" below with your Gemini subscription.");
+    throw new SetupNeeded("AI pictures aren't set up yet. Add your Google (Gemini) key in Settings, or use \"Send to Gemini\" below with your Gemini subscription.");
   }
   const m = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/.exec(imageDataUrl);
   if (!m) throw new Error("The design picture couldn't be read.");
-  const png = which === "google" ? await withGoogle(m[1], m[2], instruction, refs) : await withReplicate(imageDataUrl, instruction);
+  const png = which === "google" ? await withGoogle(m[1], m[2], instruction, refs, geminiKey || process.env.GEMINI_API_KEY || "") : await withReplicate(imageDataUrl, instruction);
   return saveFile("renders", "png", png, "image/png");
 }
 
@@ -56,8 +57,8 @@ async function aspectOf(base64: string): Promise<string> {
   });
 }
 
-async function withGoogle(mime: string, base64: string, instruction: string, refs: Reference[]): Promise<Buffer> {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+async function withGoogle(mime: string, base64: string, instruction: string, refs: Reference[], apiKey: string): Promise<Buffer> {
+  const ai = new GoogleGenAI({ apiKey });
   const model = process.env.GEMINI_IMAGE_MODEL || "gemini-nano-banana-2.1";
 
   type Block = { type: "text"; text: string } | { type: "image"; mime_type: string; data: string };
