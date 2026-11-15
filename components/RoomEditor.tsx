@@ -335,7 +335,7 @@ export default function RoomEditor(props: {
     // Only nudge once (not on every color change while dragging the picker).
     if (!hadFinish && !opt?.strokes.some((s) => !s.erase)) {
       setTool("outline");
-      toast("Now outline the wall (click its corners), or switch to Brush and paint over it.");
+      toast("Outline the wall: click its corners, then Finish shape. Or switch to Brush to paint over it.");
     }
   }
 
